@@ -663,6 +663,10 @@ void matrix_scan_quantum() {
     rgb_matrix_task();
 #endif
 
+#if defined(STENO_ENABLE) && defined(STENO_REPEAT)
+    steno_task();
+#endif
+
 #ifdef WPM_ENABLE
     decay_wpm();
 #endif
