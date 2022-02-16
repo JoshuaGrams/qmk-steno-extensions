@@ -97,6 +97,12 @@ ifeq ($(strip $(STENO_ENABLE)), yes)
     OPT_DEFS += -DSTENO_ENABLE
     VIRTSER_ENABLE ?= yes
     SRC += $(QUANTUM_DIR)/process_keycode/process_steno.c
+    ifeq ($(strip $(STENO_REPEAT)), yes)
+        OPT_DEFS += -DSTENO_REPEAT
+    endif
+    ifeq ($(strip $(STENO_1UP)), yes)
+        OPT_DEFS += -DSTENO_1UP
+    endif
 endif
 
 ifeq ($(strip $(VIRTSER_ENABLE)), yes)

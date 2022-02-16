@@ -60,8 +60,85 @@
 
 static uint8_t      state[MAX_STATE_SIZE] = {0};
 static uint8_t      chord[MAX_STATE_SIZE] = {0};
+#ifdef STENO_1UP
+static uint8_t      ignore[MAX_STATE_SIZE] = {0};
+static bool         trigger               = false;
+#endif
 static int8_t       pressed               = 0;
 static steno_mode_t mode;
+
+#ifdef STENO_REPEAT
+#define MAX_REPEAT 8
+#define BREAK_PERCENT 50
+#ifndef STENO_REPEAT_DELAY_MS
+#  define STENO_REPEAT_DELAY_MS 350
+#endif
+#ifndef STENO_REPEAT_SPEED_PERCENT
+#  define STENO_REPEAT_SPEED_PERCENT 400
+#endif
+#define STENO_MAX_REPS_PER_SEC 50
+#define STENO_MIN_MS_PER_REP (1000 / STENO_MAX_REPS_PER_SEC)
+static uint8_t old_chords[MAX_REPEAT][MAX_STATE_SIZE];
+static uint16_t press_times[MAX_REPEAT], per_repeat;
+static uint16_t last_change, last_press;
+static uint8_t o_first, o_count, o_last, o_repeat;
+
+#ifndef max
+# define max(a, b) ((a) > (b) ? (a) : (b))
+#endif
+
+// Get the index of the nth entry in the circular buffer.
+// (assumes n < MAX_REPEAT)
+static uint8_t o_next(uint8_t n) {
+    n += o_first;
+    if(n >= MAX_REPEAT) {
+        n -= MAX_REPEAT;
+    }
+    return n;
+}
+
+static void save_chord(void) {
+    if (o_count == MAX_REPEAT) {
+        o_last = o_first;
+        o_first = o_next(1);
+    } else {
+        o_last = o_next(o_count);
+        ++o_count;
+    }
+    memcpy(old_chords[o_last], chord, sizeof(chord));
+    press_times[o_last] = last_press;
+}
+
+// Remove any history before a timing gap that's more than
+// +/-BREAK_PERCENT off from the timing of the most recent
+// two chords.
+static void forget_before_pause(void) {
+    const uint16_t per_stroke = last_press - press_times[o_last];
+    const uint16_t margin = per_stroke * BREAK_PERCENT / 100;
+    for (uint8_t i=o_count; i>0; --i) {
+        uint8_t c = o_next(i-1);
+        uint16_t dt = last_press - press_times[c];
+        if (dt < per_stroke - margin || dt > per_stroke + margin) {
+            o_first = o_next(i);
+            o_count -= i;
+            break;
+        }
+        last_press = press_times[c];
+    }
+}
+
+static bool find_loop(void) {
+    for(uint8_t i=0; i<o_count; ++i) {
+        uint8_t c = o_next(i);
+        if(memcmp(state, old_chords[c], sizeof(state)) == 0) {
+            o_first = c;
+            o_count = o_count - i;
+            return true;
+        }
+    }
+    return false;
+}
+#endif
 
 static const uint8_t boltmap[64] PROGMEM = {TXB_NUL, TXB_NUM, TXB_NUM, TXB_NUM, TXB_NUM, TXB_NUM, TXB_NUM, TXB_S_L, TXB_S_L, TXB_T_L, TXB_K_L, TXB_P_L, TXB_W_L, TXB_H_L, TXB_R_L, TXB_A_L, TXB_O_L, TXB_STR, TXB_STR, TXB_NUL, TXB_NUL, TXB_NUL, TXB_STR, TXB_STR, TXB_E_R, TXB_U_R, TXB_F_R, TXB_R_R, TXB_P_R, TXB_B_R, TXB_L_R, TXB_G_R, TXB_T_R, TXB_S_R, TXB_D_R, TXB_NUM, TXB_NUM, TXB_NUM, TXB_NUM, TXB_NUM, TXB_NUM, TXB_Z_R};
 
@@ -95,6 +172,16 @@ void steno_init() {
 
 void steno_set_mode(steno_mode_t new_mode) {
     steno_clear_state();
+#ifdef STENO_1UP
+    memset(ignore, 0, sizeof(ignore));
+#endif
+#ifdef STENO_REPEAT
+    o_first = 0;
+    o_count = 0;
+    o_last = 0;
+    o_repeat = 0;
+    per_repeat = 0;
+#endif
     mode = new_mode;
     eeprom_update_byte(EECONFIG_STENOMODE, mode);
 }
@@ -123,7 +210,10 @@ static void send_steno_chord(void) {
                 break;
         }
     }
-    steno_clear_state();
+    memset(chord, 0, sizeof(chord));
+#ifdef STENO_1UP
+    memcpy(ignore, state, sizeof(state));
+#endif
 }
 
 uint8_t *steno_get_state(void) { return &state[0]; }
@@ -136,6 +226,11 @@ static bool update_state_bolt(uint8_t key, bool press) {
         state[TXB_GET_GROUP(boltcode)] |= boltcode;
         chord[TXB_GET_GROUP(boltcode)] |= boltcode;
     } else {
+#ifdef STENO_1UP
+        memcpy(chord, state, sizeof(state));
+        trigger = !(ignore[TXB_GET_GROUP(boltcode)] & boltcode);
+        ignore[TXB_GET_GROUP(boltcode)] &= ~boltcode;
+#endif
         state[TXB_GET_GROUP(boltcode)] &= ~boltcode;
     }
     return false;
@@ -148,6 +243,11 @@ static bool update_state_gemini(uint8_t key, bool press) {
         state[idx] |= bit;
         chord[idx] |= bit;
     } else {
+#ifdef STENO_1UP
+        memcpy(chord, state, sizeof(state));
+        trigger = !(ignore[idx] & bit);
+        ignore[idx] &= ~bit;
+#endif
         state[idx] &= ~bit;
     }
     return false;
@@ -185,6 +285,15 @@ bool process_steno(uint16_t keycode, keyrecord_t *record) {
             if (!process_steno_user(keycode, record)) {
                 return false;
             }
+
+#ifdef STENO_REPEAT
+            per_repeat = 0;
+            last_change = timer_read();
+            if (IS_PRESSED(record->event)) {
+                last_press = last_change;
+            }
+#endif
+
             switch (mode) {
                 case STENO_MODE_BOLT:
                     update_state_bolt(keycode - QK_STENO, IS_PRESSED(record->event));
@@ -201,11 +310,63 @@ bool process_steno(uint16_t keycode, keyrecord_t *record) {
                     --pressed;
                     if (pressed <= 0) {
                         pressed = 0;
+#ifndef STENO_1UP
+#ifdef STENO_REPEAT
+                        save_chord();
+#endif
+                        send_steno_chord();
+#endif
+                    }
+#ifdef STENO_1UP
+                    if (trigger) {
+#ifdef STENO_REPEAT
+                        save_chord();
+#endif
                         send_steno_chord();
                     }
+                    if (trigger) {
+                        send_steno_chord();
+                    }
+#endif
                 }
             }
             return false;
     }
     return true;
 }
+
+#ifdef STENO_REPEAT
+void steno_task(void) {
+    if (pressed > 0 && o_count > 0) {
+        const uint16_t hold = timer_elapsed(last_change);
+        const uint16_t gap = last_press - press_times[o_last];
+        // gap > 0: if we just sent a chord, it doesn't count
+        // as a hold until *another* key is pressed.
+        if (gap > 0 && per_repeat == 0 && hold >= gap) {
+            // Not repeating: should we start?
+            forget_before_pause();
+            if (find_loop()) {
+                o_repeat = MAX_REPEAT;
+                per_repeat = gap * 100 / STENO_REPEAT_SPEED_PERCENT;
+                if (per_repeat < STENO_MIN_MS_PER_REP) {
+                    per_repeat = STENO_MIN_MS_PER_REP;
+                }
+#ifdef STENO_1UP
+                memcpy(ignore, state, sizeof(state));
+#endif
+            }
+        }
+        if (per_repeat != 0 && hold >= (o_repeat == MAX_REPEAT ? max(STENO_REPEAT_DELAY_MS, per_repeat) : per_repeat)) {
+            // Repeating: time to send the next chord.
+            if(o_repeat == MAX_REPEAT) o_repeat = 0;
+            memcpy(chord, old_chords[o_next(o_repeat)], sizeof(chord));
+            send_steno_chord();
+            ++o_repeat;
+            if (o_repeat == o_count) {
+                o_repeat = 0;
+            }
+            last_change = timer_read();
+        }
+    }
+}
+#endif
