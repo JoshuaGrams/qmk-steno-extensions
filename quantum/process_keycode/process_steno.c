@@ -65,7 +65,7 @@ static uint8_t      ignore[MAX_STATE_SIZE] = {0};
 static bool         trigger               = false;
 #endif
 static int8_t       pressed               = 0;
-static steno_mode_t mode;
+//static steno_mode_t mode;
 
 #ifdef STENO_REPEAT
 #define MAX_REPEAT 8
@@ -133,7 +133,7 @@ static bool find_loop(void) {
 }
 #endif
 
-static const uint8_t boltmap[64] PROGMEM = {TXB_NUL, TXB_NUM, TXB_NUM, TXB_NUM, TXB_NUM, TXB_NUM, TXB_NUM, TXB_S_L, TXB_S_L, TXB_T_L, TXB_K_L, TXB_P_L, TXB_W_L, TXB_H_L, TXB_R_L, TXB_A_L, TXB_O_L, TXB_STR, TXB_STR, TXB_NUL, TXB_NUL, TXB_NUL, TXB_STR, TXB_STR, TXB_E_R, TXB_U_R, TXB_F_R, TXB_R_R, TXB_P_R, TXB_B_R, TXB_L_R, TXB_G_R, TXB_T_R, TXB_S_R, TXB_D_R, TXB_NUM, TXB_NUM, TXB_NUM, TXB_NUM, TXB_NUM, TXB_NUM, TXB_Z_R};
+//static const uint8_t boltmap[64] PROGMEM = {TXB_NUL, TXB_NUM, TXB_NUM, TXB_NUM, TXB_NUM, TXB_NUM, TXB_NUM, TXB_S_L, TXB_S_L, TXB_T_L, TXB_K_L, TXB_P_L, TXB_W_L, TXB_H_L, TXB_R_L, TXB_A_L, TXB_O_L, TXB_STR, TXB_STR, TXB_NUL, TXB_NUL, TXB_NUL, TXB_STR, TXB_STR, TXB_E_R, TXB_U_R, TXB_F_R, TXB_R_R, TXB_P_R, TXB_B_R, TXB_L_R, TXB_G_R, TXB_T_R, TXB_S_R, TXB_D_R, TXB_NUM, TXB_NUM, TXB_NUM, TXB_NUM, TXB_NUM, TXB_NUM, TXB_Z_R};
 
 static void steno_clear_state(void) {
     memset(state, 0, sizeof(state));
@@ -151,14 +151,16 @@ static void send_steno_state(uint8_t size, bool send_empty) {
 }
 
 void steno_init() {
+    /*
     if (!eeconfig_is_enabled()) {
         eeconfig_init();
     }
     mode = eeprom_read_byte(EECONFIG_STENOMODE);
+    */
 }
 
 void steno_set_mode(steno_mode_t new_mode) {
-    steno_clear_state();
+    //steno_clear_state();
 #ifdef STENO_1UP
     memset(ignore, 0, sizeof(ignore));
 #endif
@@ -169,8 +171,8 @@ void steno_set_mode(steno_mode_t new_mode) {
     o_repeat = 0;
     per_repeat = 0;
 #endif
-    mode = new_mode;
-    eeprom_update_byte(EECONFIG_STENOMODE, mode);
+    //mode = new_mode;
+    //eeprom_update_byte(EECONFIG_STENOMODE, mode);
 }
 
 /* override to intercept chords right before they get sent.
@@ -183,7 +185,7 @@ __attribute__((weak)) bool postprocess_steno_user(uint16_t keycode, keyrecord_t 
 __attribute__((weak)) bool process_steno_user(uint16_t keycode, keyrecord_t *record) { return true; }
 
 static void send_steno_chord(void) {
-    if (send_steno_chord_user(mode, chord)) {
+    /*if (send_steno_chord_user(mode, chord)) {
         switch (mode) {
             case STENO_MODE_BOLT:
                 send_steno_state(BOLT_STATE_SIZE, false);
@@ -196,17 +198,24 @@ static void send_steno_chord(void) {
                 send_steno_state(GEMINI_STATE_SIZE, true);
                 break;
         }
+    }*/
+
+    if (send_steno_chord_user(STENO_MODE_GEMINI, chord)) {
+        chord[0] |= 0x80;  // Indicate start of packet
+        send_steno_state(GEMINI_STATE_SIZE, true);
     }
     memset(chord, 0, sizeof(chord));
 #ifdef STENO_1UP
     memcpy(ignore, state, sizeof(state));
 #endif
+steno_clear_state();
 }
 
 uint8_t *steno_get_state(void) { return &state[0]; }
 
 uint8_t *steno_get_chord(void) { return &chord[0]; }
 
+/*
 static bool update_state_bolt(uint8_t key, bool press) {
     uint8_t boltcode = pgm_read_byte(boltmap + key);
     if (press) {
@@ -222,6 +231,7 @@ static bool update_state_bolt(uint8_t key, bool press) {
     }
     return false;
 }
+*/
 
 static bool update_state_gemini(uint8_t key, bool press) {
     int     idx = key / 7;
@@ -242,6 +252,7 @@ static bool update_state_gemini(uint8_t key, bool press) {
 
 bool process_steno(uint16_t keycode, keyrecord_t *record) {
     switch (keycode) {
+        /*
         case QK_STENO_BOLT:
             if (!process_steno_user(keycode, record)) {
                 return false;
@@ -250,7 +261,7 @@ bool process_steno(uint16_t keycode, keyrecord_t *record) {
                 steno_set_mode(STENO_MODE_BOLT);
             }
             return false;
-
+        */
         case QK_STENO_GEMINI:
             if (!process_steno_user(keycode, record)) {
                 return false;
@@ -273,6 +284,7 @@ bool process_steno(uint16_t keycode, keyrecord_t *record) {
             per_repeat = 0;
 #endif
 
+            /*
             switch (mode) {
                 case STENO_MODE_BOLT:
                     update_state_bolt(keycode - QK_STENO, IS_PRESSED(record->event));
@@ -281,8 +293,12 @@ bool process_steno(uint16_t keycode, keyrecord_t *record) {
                     update_state_gemini(keycode - QK_STENO, IS_PRESSED(record->event));
                     break;
             }
+            */
+            update_state_gemini(keycode - QK_STENO, IS_PRESSED(record->event));
+
             // allow postprocessing hooks
-            if (postprocess_steno_user(keycode, record, mode, chord, pressed)) {
+         // if (postprocess_steno_user(keycode, record, mode, chord, pressed)) {
+            if (postprocess_steno_user(keycode, record, STENO_MODE_GEMINI, chord, pressed)) {
                 if (IS_PRESSED(record->event)) {
                     ++pressed;
                 } else {
